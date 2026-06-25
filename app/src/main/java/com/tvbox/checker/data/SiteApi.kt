@@ -92,12 +92,14 @@ class SiteApi(context: Context? = null) {
             }
 
             val request = Request.Builder().url(apiUrl).header("User-Agent", "okhttp/4.12.0").build()
-            client.newCall(request).execute().use { response ->
-                val latency = System.currentTimeMillis() - startTime
-                if (!response.isSuccessful) {
-                    return@withContext SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "HTTP ${response.code}", latency = latency)
-                }
+            val response = client.newCall(request).execute()
+            val latency = System.currentTimeMillis() - startTime
+            if (!response.isSuccessful) {
+                response.close()
+                SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "HTTP ${response.code}", latency = latency)
+            } else {
                 val body = response.body?.string() ?: ""
+                response.close()
                 val items = parseSearchResult(body, site.type)
                 SearchResult(siteName = siteName, siteKey = site.key, items = items, latency = latency)
             }
@@ -150,15 +152,6 @@ class SiteApi(context: Context? = null) {
         }
 
         val resultJson = withContext(Dispatchers.IO) { spider.searchContent(keyword, false) }
-        val latency = System.currentTimeMillis() - startTime
-
-        if (resultJson.isBlank()) {
-            return SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "搜索返回空", latency = latency)
-        }
-
-        val items = parseSearchResult(resultJson, site.type)
-        return SearchResult(siteName = siteName, siteKey = site.key, items = items, latency = latency)
-    }        val resultJson = withContext(Dispatchers.IO) { spider.searchContent(keyword, false) }
         val latency = System.currentTimeMillis() - startTime
 
         if (resultJson.isBlank()) {
@@ -275,13 +268,14 @@ class SiteApi(context: Context? = null) {
                     .header("User-Agent", "okhttp/4.12.0")
                     .build()
 
-                client.newCall(request).execute().use { response ->
-                    val latency = System.currentTimeMillis() - startTime
-                    if (!response.isSuccessful) {
-                        return@withContext DetailResult(error = "HTTP ${response.code}", latency = latency)
-                    }
-
+                val response = client.newCall(request).execute()
+                val latency = System.currentTimeMillis() - startTime
+                if (!response.isSuccessful) {
+                    response.close()
+                    DetailResult(error = "HTTP ${response.code}", latency = latency)
+                } else {
                     val body = response.body?.string() ?: ""
+                    response.close()
                     parseDetailResult(body, site.type, latency)
                 }
             } catch (e: Exception) {
@@ -298,60 +292,37 @@ class SiteApi(context: Context? = null) {
         return withContext(Dispatchers.IO) {
             val startTime = System.currentTimeMillis()
             try {
-                // 对 m3u8 链接，先获取内容验证有效性
                 val isM3u8 = url.contains(".m3u8") || url.contains("m3u8")
                 val request = Request.Builder()
                     .url(url)
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36")
-                    .apply {
-                        if (!isM3u8) head() // 非 m3u8 用 HEAD 请求节省流量
-                    }
+                    .apply { if (!isM3u8) head() }
                     .build()
 
-                client.newCall(request).execute().use { response ->
-                    val latency = System.currentTimeMillis() - startTime
-                    val contentType = response.header("Content-Type") ?: ""
-                    val contentLength = response.header("Content-Length")?.toLongOrNull() ?: 0
+                val response = client.newCall(request).execute()
+                val latency = System.currentTimeMillis() - startTime
+                val contentType = response.header("Content-Type") ?: ""
+                val contentLength = response.header("Content-Length")?.toLongOrNull() ?: 0
 
-                    if (!response.isSuccessful) {
-                        return@withContext PlayTestResult(
-                            url = url,
-                            status = PlayStatus.FAILED,
-                            latency = latency,
-                            error = "HTTP ${response.code}"
-                        )
+                if (!response.isSuccessful) {
+                    response.close()
+                    PlayTestResult(url = url, status = PlayStatus.FAILED, latency = latency, error = "HTTP ${response.code}")
+                } else if (isM3u8) {
+                    val body = response.body?.string() ?: ""
+                    response.close()
+                    val valid = body.contains("#EXTM3U") || body.contains("#EXT-X-") || body.contains(".ts")
+                    if (!valid) {
+                        PlayTestResult(url = url, status = PlayStatus.INVALID, latency = latency, error = "非有效m3u8内容")
+                    } else {
+                        PlayTestResult(url = url, status = PlayStatus.OK, latency = latency, contentType = contentType, contentLength = contentLength)
                     }
-
-                    // 验证 m3u8 内容
-                    if (isM3u8) {
-                        val body = response.body?.string() ?: ""
-                        val valid = body.contains("#EXTM3U") || body.contains("#EXT-X-") || body.contains(".ts")
-                        if (!valid) {
-                            return@withContext PlayTestResult(
-                                url = url,
-                                status = PlayStatus.INVALID,
-                                latency = latency,
-                                error = "非有效m3u8内容"
-                            )
-                        }
-                    }
-
-                    PlayTestResult(
-                        url = url,
-                        status = PlayStatus.OK,
-                        latency = latency,
-                        contentType = contentType,
-                        contentLength = contentLength
-                    )
+                } else {
+                    response.close()
+                    PlayTestResult(url = url, status = PlayStatus.OK, latency = latency, contentType = contentType, contentLength = contentLength)
                 }
             } catch (e: Exception) {
                 val latency = System.currentTimeMillis() - startTime
-                PlayTestResult(
-                    url = url,
-                    status = if (latency >= 14000) PlayStatus.TIMEOUT else PlayStatus.FAILED,
-                    latency = latency,
-                    error = e.message ?: "Unknown error"
-                )
+                PlayTestResult(url = url, status = if (latency >= 14000) PlayStatus.TIMEOUT else PlayStatus.FAILED, latency = latency, error = e.message ?: "Unknown error")
             }
         }
     }
