@@ -375,9 +375,13 @@ class SiteApi(context: Context? = null) {
                         val separator = if (site.api.contains("?")) "&" else "?"
                         val url = "${site.api}${separator}ac=list"
                         val request = Request.Builder().url(url).header("User-Agent", "okhttp/4.12.0").build()
-                        client.newCall(request).execute().use { response ->
-                            if (!response.isSuccessful) return@withContext HomeResult()
+                        val response = client.newCall(request).execute()
+                        if (!response.isSuccessful) {
+                            response.close()
+                            HomeResult()
+                        } else {
                             val body = response.body?.string() ?: ""
+                            response.close()
                             parseHomeResult(body)
                         }
                     }
@@ -385,15 +389,11 @@ class SiteApi(context: Context? = null) {
                     site.type == 3 && site.api.startsWith("csp_") -> {
                         val ext = site.ext?.let { extractExtString(it) } ?: ""
                         val spider = spiderLoader?.getSpider(globalSpiderUrl, site.api, ext)
-                            ?: return@withContext HomeResult()
-                        val result = spider.homeContent(true)
-                        parseHomeResult(result)
+                        if (spider == null) HomeResult()
+                        else parseHomeResult(spider.homeContent(true))
                     }
                     // DRPY
-                    site.type == 3 && isDrpyApi(site.api) -> {
-                        // DRPY 首页需要完整 JS 执行环境，返回空
-                        HomeResult()
-                    }
+                    site.type == 3 && isDrpyApi(site.api) -> HomeResult()
                     else -> HomeResult()
                 }
             } catch (e: Exception) {
@@ -413,18 +413,21 @@ class SiteApi(context: Context? = null) {
                         val separator = if (site.api.contains("?")) "&" else "?"
                         val url = "${site.api}${separator}ac=detail&t=$categoryId&pg=1"
                         val request = Request.Builder().url(url).header("User-Agent", "okhttp/4.12.0").build()
-                        client.newCall(request).execute().use { response ->
-                            if (!response.isSuccessful) return@withContext emptyList()
+                        val response = client.newCall(request).execute()
+                        if (!response.isSuccessful) {
+                            response.close()
+                            emptyList()
+                        } else {
                             val body = response.body?.string() ?: ""
+                            response.close()
                             parseSearchResult(body, site.type)
                         }
                     }
                     site.type == 3 && site.api.startsWith("csp_") -> {
                         val ext = site.ext?.let { extractExtString(it) } ?: ""
                         val spider = spiderLoader?.getSpider(globalSpiderUrl, site.api, ext)
-                            ?: return@withContext emptyList()
-                        val result = spider.categoryContent(categoryId, "1", true)
-                        parseSearchResult(result, site.type)
+                        if (spider == null) emptyList()
+                        else parseSearchResult(spider.categoryContent(categoryId, "1", true), site.type)
                     }
                     else -> emptyList()
                 }
