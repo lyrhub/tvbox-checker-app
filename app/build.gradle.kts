@@ -55,6 +55,12 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    // Spider: Rhino JS Engine (for DRPY scripts)
+    implementation("org.mozilla:rhino:1.7.15")
+
+    // Spider: HTML Parser (for XPath/CSS selector parsing)
+    implementation("org.jsoup:jsoup:1.18.1")
+
     // DataStore for local settings
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 

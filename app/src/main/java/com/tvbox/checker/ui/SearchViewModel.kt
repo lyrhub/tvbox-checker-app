@@ -15,7 +15,7 @@ import kotlinx.coroutines.sync.withPermit
  */
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val siteApi = SiteApi()
+    private val siteApi = SiteApi(application)
 
     private val _searchState = MutableStateFlow(SearchState())
     val searchState: StateFlow<SearchState> = _searchState.asStateFlow()
@@ -45,11 +45,17 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 val text = response.body?.string() ?: ""
                 val config = SourceParser.parse(text)
                 loadedConfig = config
-                // 只保留可搜索的站点 (type 0, 1, 3 且 searchable != 0)
+
+                // 设置全局 spider URL
+                if (config.spider.isNotBlank()) {
+                    siteApi.globalSpiderUrl = config.spider
+                }
+
+                // 保留所有可搜索的站点 (type 0, 1, 3, 4 且 searchable != 0)
                 loadedSites = config.sites.filter { site ->
-                    (site.type == 0 || site.type == 1 || site.type == 3) &&
+                    (site.type == 0 || site.type == 1 || site.type == 3 || site.type == 4) &&
                     site.searchable != 0 &&
-                    site.api.isNotBlank()
+                    (site.api.isNotBlank() || site.ext != null)
                 }
 
                 _searchState.update {

@@ -1,10 +1,14 @@
 package com.tvbox.checker.data
 
+import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import com.tvbox.checker.spider.SpiderLoader
+import com.tvbox.checker.spider.DrpyEngine
+import com.tvbox.checker.spider.XpathParser
 import java.util.concurrent.TimeUnit
 
 /**
@@ -13,15 +17,24 @@ import java.util.concurrent.TimeUnit
  * TVBox 站点类型：
  * - type 0: CMS JSON (苹果CMS v10 API) - 直接 HTTP JSON 接口
  * - type 1: CMS XML/JSON (苹果CMS/海洋CMS) - XML 或 JSON
- * - type 3: Spider (JAR/DEX 爬虫) - 需要 spider 环境，这里仅测试 ext URL
- * - type 4: XPath/JSON Path 自定义规则
+ * - type 3: Spider (JAR/DEX 爬虫) - 使用 DexClassLoader 加载 jar 并反射调用
+ *           - csp_* 子类型: 调用 jar 中的 Java 类
+ *           - drpy 子类型: 使用 JS 引擎执行 drpy 脚本
+ * - type 4: XPath/CSS 选择器规则 - 用 Jsoup 解析 HTML
  *
  * 苹果CMS API 常见接口：
  * - ?ac=list          → 获取分类列表
  * - ?ac=detail        → 获取详情（含播放链接）
  * - ?ac=search&wd=xxx → 搜索
  */
-class SiteApi {
+class SiteApi(context: Context? = null) {
+
+    private val spiderLoader: SpiderLoader? = context?.let { SpiderLoader(it) }
+    private val drpyEngine: DrpyEngine? = context?.let { DrpyEngine(it) }
+    private val xpathParser = XpathParser()
+
+    // 源级别的 spider URL（来自配置的 spider 字段）
+    var globalSpiderUrl: String = ""
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -33,60 +46,175 @@ class SiteApi {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     /**
-     * 搜索资源
+     * 搜索资源 - 根据站点类型分派到不同引擎
      * @return 搜索结果列表
      */
     suspend fun search(site: TvBoxSite, keyword: String): SearchResult {
-        return withContext(Dispatchers.IO) {
-            val startTime = System.currentTimeMillis()
-            try {
-                val apiUrl = buildSearchUrl(site, keyword)
-                if (apiUrl.isBlank()) {
-                    return@withContext SearchResult(
-                        siteName = site.name.ifBlank { site.key },
-                        siteKey = site.key,
-                        items = emptyList(),
-                        error = "无法构建搜索URL (type=${site.type})",
-                        latency = 0
-                    )
+        val startTime = System.currentTimeMillis()
+        val siteName = site.name.ifBlank { site.key }
+
+        return try {
+            when {
+                // Type 3 - Spider (csp_*) : 使用 DexClassLoader 加载 jar
+                site.type == 3 && site.api.startsWith("csp_") -> {
+                    searchWithSpider(site, keyword, startTime)
                 }
-
-                val request = Request.Builder()
-                    .url(apiUrl)
-                    .header("User-Agent", "okhttp/4.12.0")
-                    .build()
-
-                client.newCall(request).execute().use { response ->
-                    val latency = System.currentTimeMillis() - startTime
-                    if (!response.isSuccessful) {
-                        return@withContext SearchResult(
-                            siteName = site.name.ifBlank { site.key },
-                            siteKey = site.key,
-                            items = emptyList(),
-                            error = "HTTP ${response.code}",
-                            latency = latency
-                        )
-                    }
-
-                    val body = response.body?.string() ?: ""
-                    val items = parseSearchResult(body, site.type)
-                    SearchResult(
-                        siteName = site.name.ifBlank { site.key },
-                        siteKey = site.key,
-                        items = items,
-                        latency = latency
-                    )
+                // Type 3 - DRPY (api 指向 js 文件) : 使用 Rhino JS 引擎
+                site.type == 3 && isDrpyApi(site.api) -> {
+                    searchWithDrpy(site, keyword, startTime)
                 }
-            } catch (e: Exception) {
-                val latency = System.currentTimeMillis() - startTime
-                SearchResult(
-                    siteName = site.name.ifBlank { site.key },
-                    siteKey = site.key,
-                    items = emptyList(),
-                    error = e.message ?: "Unknown error",
-                    latency = latency
-                )
+                // Type 4 - XPath/CSS 规则 : 使用 Jsoup 解析
+                site.type == 4 -> {
+                    searchWithXpath(site, keyword, startTime)
+                }
+                // Type 0/1 - CMS API : 直接 HTTP 请求
+                else -> {
+                    searchWithCmsApi(site, keyword, startTime)
+                }
             }
+        } catch (e: Exception) {
+            val latency = System.currentTimeMillis() - startTime
+            SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = e.message ?: "Unknown error", latency = latency)
+        }
+    }
+
+    /**
+     * Type 0/1 - 苹果CMS API 搜索
+     */
+    private suspend fun searchWithCmsApi(site: TvBoxSite, keyword: String, startTime: Long): SearchResult {
+        val siteName = site.name.ifBlank { site.key }
+        return withContext(Dispatchers.IO) {
+            val apiUrl = buildSearchUrl(site, keyword)
+            if (apiUrl.isBlank()) {
+                return@withContext SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "无法构建搜索URL", latency = 0)
+            }
+
+            val request = Request.Builder().url(apiUrl).header("User-Agent", "okhttp/4.12.0").build()
+            client.newCall(request).execute().use { response ->
+                val latency = System.currentTimeMillis() - startTime
+                if (!response.isSuccessful) {
+                    return@withContext SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "HTTP ${response.code}", latency = latency)
+                }
+                val body = response.body?.string() ?: ""
+                val items = parseSearchResult(body, site.type)
+                SearchResult(siteName = siteName, siteKey = site.key, items = items, latency = latency)
+            }
+        }
+    }
+
+    /**
+     * Type 3 (csp_*) - 使用 Spider JAR 搜索
+     */
+    private suspend fun searchWithSpider(site: TvBoxSite, keyword: String, startTime: Long): SearchResult {
+        val siteName = site.name.ifBlank { site.key }
+        val loader = spiderLoader ?: return SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "SpiderLoader未初始化", latency = 0)
+
+        val spiderUrl = globalSpiderUrl
+        if (spiderUrl.isBlank()) {
+            return SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "无spider配置", latency = 0)
+        }
+
+        val ext = site.ext?.let { extractExtString(it) } ?: ""
+        val spider = loader.getSpider(spiderUrl, site.api, ext)
+            ?: return SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "Spider加载失败: ${site.api}", latency = System.currentTimeMillis() - startTime)
+
+        val resultJson = withContext(Dispatchers.IO) { spider.searchContent(keyword, false) }
+        val latency = System.currentTimeMillis() - startTime
+
+        if (resultJson.isBlank()) {
+            return SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "搜索返回空", latency = latency)
+        }
+
+        val items = parseSearchResult(resultJson, site.type)
+        return SearchResult(siteName = siteName, siteKey = site.key, items = items, latency = latency)
+    }
+
+    /**
+     * Type 3 (DRPY) - 使用 JS 引擎搜索
+     */
+    private suspend fun searchWithDrpy(site: TvBoxSite, keyword: String, startTime: Long): SearchResult {
+        val siteName = site.name.ifBlank { site.key }
+        val engine = drpyEngine ?: return SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "DrpyEngine未初始化", latency = 0)
+
+        val engineUrl = site.api // drpy2.min.js URL
+        val ruleUrl = site.ext?.let { extractExtString(it) } ?: ""
+        if (ruleUrl.isBlank()) {
+            return SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "缺少DRPY规则URL", latency = 0)
+        }
+
+        val resultJson = engine.search(engineUrl, ruleUrl, keyword)
+        val latency = System.currentTimeMillis() - startTime
+        val items = parseSearchResult(resultJson, site.type)
+        return SearchResult(siteName = siteName, siteKey = site.key, items = items, latency = latency)
+    }
+
+    /**
+     * Type 4 - 使用 XPath/CSS 选择器搜索
+     */
+    private suspend fun searchWithXpath(site: TvBoxSite, keyword: String, startTime: Long): SearchResult {
+        val siteName = site.name.ifBlank { site.key }
+        val extRules = parseExtRules(site.ext)
+        val searchUrl = extRules["searchUrl"] ?: ""
+
+        if (searchUrl.isBlank()) {
+            return SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "缺少searchUrl规则", latency = 0)
+        }
+
+        val rules = mapOf(
+            "list" to (extRules["searchList"] ?: extRules["list"] ?: ""),
+            "title" to (extRules["searchTitle"] ?: extRules["title"] ?: "a@title"),
+            "url" to (extRules["searchUrl_item"] ?: extRules["url"] ?: "a@href"),
+            "img" to (extRules["searchImg"] ?: extRules["img"] ?: "img@src"),
+            "desc" to (extRules["searchDesc"] ?: extRules["desc"] ?: "")
+        )
+
+        val resultJson = xpathParser.search(searchUrl, keyword, rules)
+        val latency = System.currentTimeMillis() - startTime
+        val items = parseSearchResult(resultJson, site.type)
+        return SearchResult(siteName = siteName, siteKey = site.key, items = items, latency = latency)
+    }
+
+    /**
+     * 判断 api 是否是 DRPY 引擎 URL
+     */
+    private fun isDrpyApi(api: String): Boolean {
+        return api.contains("drpy") || api.endsWith(".js") || api.contains(".min.js")
+    }
+
+    /**
+     * 从 ext JsonElement 中提取字符串
+     */
+    private fun extractExtString(ext: JsonElement): String {
+        return when {
+            ext is JsonPrimitive && ext.isString -> ext.content
+            ext is JsonObject -> Json.encodeToString(JsonObject.serializer(), ext)
+            else -> ext.toString()
+        }
+    }
+
+    /**
+     * 解析 type 4 的 ext 规则
+     */
+    private fun parseExtRules(ext: JsonElement?): Map<String, String> {
+        if (ext == null) return emptyMap()
+        return try {
+            when {
+                ext is JsonObject -> {
+                    ext.entries.associate { (k, v) ->
+                        k to (if (v is JsonPrimitive) v.content else v.toString())
+                    }
+                }
+                ext is JsonPrimitive && ext.isString -> {
+                    // 可能是 JSON 字符串
+                    val obj = json.parseToJsonElement(ext.content).jsonObject
+                    obj.entries.associate { (k, v) ->
+                        k to (if (v is JsonPrimitive) v.content else v.toString())
+                    }
+                }
+                else -> emptyMap()
+            }
+        } catch (e: Exception) {
+            emptyMap()
         }
     }
 
