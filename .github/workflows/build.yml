@@ -34,8 +34,18 @@ jobs:
             gradle wrapper --gradle-version 8.9
           fi
 
+      - name: Decode Keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
       - name: Build Debug APK
         run: ./gradlew assembleDebug
+        env:
+          KEYSTORE_FILE: ${{ github.workspace }}/app/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
@@ -45,6 +55,11 @@ jobs:
 
       - name: Build Release APK
         run: ./gradlew assembleRelease
+        env:
+          KEYSTORE_FILE: ${{ github.workspace }}/app/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
