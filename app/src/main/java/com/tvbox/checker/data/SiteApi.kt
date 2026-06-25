@@ -340,8 +340,11 @@ class SiteApi(context: Context? = null) {
     suspend fun getHomeContent(site: TvBoxSite): HomeResult {
         return withContext(Dispatchers.IO) {
             try {
+                val extUrl = site.ext?.let { extractExtString(it) } ?: ""
+                val isXBPQType = site.api in listOf("csp_XBPQ", "csp_XBiubiu", "csp_XBPQb", "csp_XYQHiker", "csp_AppYsV2")
+
                 when {
-                    // CMS API
+                    // CMS API (type 0/1)
                     (site.type == 0 || site.type == 1) && site.api.startsWith("http") -> {
                         val separator = if (site.api.contains("?")) "&" else "?"
                         val url = "${site.api}${separator}ac=list"
@@ -356,7 +359,12 @@ class SiteApi(context: Context? = null) {
                             parseHomeResult(body)
                         }
                     }
-                    // Spider csp_*
+                    // xBPQ 类型 - 使用规则解析器获取首页
+                    site.type == 3 && isXBPQType && extUrl.startsWith("http") -> {
+                        val resultJson = xbpqParser.homeContent(extUrl)
+                        parseHomeResult(resultJson)
+                    }
+                    // Spider csp_* (非 xBPQ)
                     site.type == 3 && site.api.startsWith("csp_") -> {
                         val ext = site.ext?.let { extractExtString(it) } ?: ""
                         val spider = spiderLoader?.getSpider(globalSpiderUrl, site.api, ext)
