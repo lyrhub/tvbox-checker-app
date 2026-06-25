@@ -1,5 +1,6 @@
 package com.tvbox.checker.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -28,10 +29,30 @@ fun BrowseScreen(
 ) {
     var sourceUrl by remember { mutableStateOf("") }
 
+    // 返回键处理：在站点详情时返回站点列表，而不是退出
+    if (browseState.selectedSite != null) {
+        BackHandler {
+            onSelectSite(browseState.selectedSite) // 触发取消选择
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("分类浏览") },
+                title = {
+                    if (browseState.selectedSite != null) {
+                        Text(browseState.selectedSite.name.ifBlank { browseState.selectedSite.key })
+                    } else {
+                        Text("分类浏览")
+                    }
+                },
+                navigationIcon = {
+                    if (browseState.selectedSite != null) {
+                        TextButton(onClick = { onSelectSite(browseState.selectedSite) }) {
+                            Text("← 返回", fontSize = 14.sp)
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
@@ -105,20 +126,6 @@ fun BrowseScreen(
                 }
             } else {
                 // 已选择站点 - 显示分类和内容
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        browseState.selectedSite.name.ifBlank { browseState.selectedSite.key },
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
-                    TextButton(onClick = { onSelectSite(browseState.selectedSite) }) {
-                        // 这里实际上会回退，下面处理
-                    }
-                }
 
                 if (browseState.isLoadingContent) {
                     Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {

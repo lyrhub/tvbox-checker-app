@@ -82,11 +82,12 @@ class BrowseViewModel(application: Application) : AndroidViewModel(application) 
                     state.copy(
                         isLoadingContent = false,
                         categories = result.categories,
-                        contentItems = result.items
+                        contentItems = result.items,
+                        error = if (result.categories.isEmpty() && result.items.isEmpty()) "该站点暂无内容（可能需要Spider环境）" else null
                     )
                 }
             } catch (e: Exception) {
-                _browseState.update { it.copy(isLoadingContent = false) }
+                _browseState.update { it.copy(isLoadingContent = false, error = "加载失败: ${e.message}") }
             }
         }
     }

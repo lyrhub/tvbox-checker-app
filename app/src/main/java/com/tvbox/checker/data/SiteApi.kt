@@ -9,6 +9,7 @@ import okhttp3.Request
 import com.tvbox.checker.spider.SpiderLoader
 import com.tvbox.checker.spider.DrpyEngine
 import com.tvbox.checker.spider.XpathParser
+import com.tvbox.checker.spider.XBPQParser
 import java.util.concurrent.TimeUnit
 
 /**
@@ -32,6 +33,7 @@ class SiteApi(context: Context? = null) {
     private val spiderLoader: SpiderLoader? = context?.let { SpiderLoader(it) }
     private val drpyEngine: DrpyEngine? = context?.let { DrpyEngine(it) }
     private val xpathParser = XpathParser()
+    private val xbpqParser = XBPQParser()
 
     // 源级别的 spider URL（来自配置的 spider 字段）
     var globalSpiderUrl: String = ""
@@ -104,9 +106,24 @@ class SiteApi(context: Context? = null) {
 
     /**
      * Type 3 (csp_*) - 使用 Spider JAR 搜索
+     * 如果 jar 加载失败，对 csp_XBPQ/csp_XBiubiu 类型回退到规则解析
      */
     private suspend fun searchWithSpider(site: TvBoxSite, keyword: String, startTime: Long): SearchResult {
         val siteName = site.name.ifBlank { site.key }
+
+        // 先检查是否有 ext URL（规则 JSON），可以直接用 xBPQ 解析器
+        val extUrl = site.ext?.let { extractExtString(it) } ?: ""
+        val isXBPQType = site.api in listOf("csp_XBPQ", "csp_XBiubiu", "csp_XBPQb", "csp_XYQHiker", "csp_AppYsV2")
+
+        if (isXBPQType && extUrl.startsWith("http")) {
+            // 直接用 xBPQ 规则解析器，不需要加载 jar
+            val resultJson = xbpqParser.search(extUrl, keyword)
+            val latency = System.currentTimeMillis() - startTime
+            val items = parseSearchResult(resultJson, site.type)
+            return SearchResult(siteName = siteName, siteKey = site.key, items = items, latency = latency)
+        }
+
+        // 尝试从 Spider JAR 加载
         val loader = spiderLoader ?: return SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "SpiderLoader未初始化", latency = 0)
 
         val spiderUrl = globalSpiderUrl
@@ -116,9 +133,32 @@ class SiteApi(context: Context? = null) {
 
         val ext = site.ext?.let { extractExtString(it) } ?: ""
         val spider = loader.getSpider(spiderUrl, site.api, ext)
-            ?: return SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "Spider加载失败: ${site.api}", latency = System.currentTimeMillis() - startTime)
+
+        if (spider == null) {
+            // Jar 加载失败，如果有 ext URL，尝试 xBPQ 回退
+            if (extUrl.startsWith("http")) {
+                val resultJson = xbpqParser.search(extUrl, keyword)
+                val latency = System.currentTimeMillis() - startTime
+                val items = parseSearchResult(resultJson, site.type)
+                return if (items.isNotEmpty()) {
+                    SearchResult(siteName = siteName, siteKey = site.key, items = items, latency = latency)
+                } else {
+                    SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "Spider加载失败，规则解析无结果", latency = latency)
+                }
+            }
+            return SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "Spider加载失败: ${site.api}", latency = System.currentTimeMillis() - startTime)
+        }
 
         val resultJson = withContext(Dispatchers.IO) { spider.searchContent(keyword, false) }
+        val latency = System.currentTimeMillis() - startTime
+
+        if (resultJson.isBlank()) {
+            return SearchResult(siteName = siteName, siteKey = site.key, items = emptyList(), error = "搜索返回空", latency = latency)
+        }
+
+        val items = parseSearchResult(resultJson, site.type)
+        return SearchResult(siteName = siteName, siteKey = site.key, items = items, latency = latency)
+    }        val resultJson = withContext(Dispatchers.IO) { spider.searchContent(keyword, false) }
         val latency = System.currentTimeMillis() - startTime
 
         if (resultJson.isBlank()) {
