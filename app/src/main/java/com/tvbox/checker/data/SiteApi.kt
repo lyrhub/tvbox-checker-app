@@ -316,6 +316,124 @@ class SiteApi(context: Context? = null) {
         }
     }
 
+    // ==================== 浏览功能 ====================
+
+    data class HomeResult(
+        val categories: List<String> = emptyList(),
+        val items: List<SearchItem> = emptyList()
+    )
+
+    /**
+     * 获取站点首页内容（分类+推荐列表）
+     */
+    suspend fun getHomeContent(site: TvBoxSite): HomeResult {
+        return withContext(Dispatchers.IO) {
+            try {
+                when {
+                    // CMS API
+                    (site.type == 0 || site.type == 1) && site.api.startsWith("http") -> {
+                        val separator = if (site.api.contains("?")) "&" else "?"
+                        val url = "${site.api}${separator}ac=list"
+                        val request = Request.Builder().url(url).header("User-Agent", "okhttp/4.12.0").build()
+                        client.newCall(request).execute().use { response ->
+                            if (!response.isSuccessful) return@withContext HomeResult()
+                            val body = response.body?.string() ?: ""
+                            parseHomeResult(body)
+                        }
+                    }
+                    // Spider csp_*
+                    site.type == 3 && site.api.startsWith("csp_") -> {
+                        val ext = site.ext?.let { extractExtString(it) } ?: ""
+                        val spider = spiderLoader?.getSpider(globalSpiderUrl, site.api, ext)
+                            ?: return@withContext HomeResult()
+                        val result = spider.homeContent(true)
+                        parseHomeResult(result)
+                    }
+                    // DRPY
+                    site.type == 3 && isDrpyApi(site.api) -> {
+                        // DRPY 首页需要完整 JS 执行环境，返回空
+                        HomeResult()
+                    }
+                    else -> HomeResult()
+                }
+            } catch (e: Exception) {
+                HomeResult()
+            }
+        }
+    }
+
+    /**
+     * 获取分类内容
+     */
+    suspend fun getCategoryContent(site: TvBoxSite, categoryId: String): List<SearchItem> {
+        return withContext(Dispatchers.IO) {
+            try {
+                when {
+                    (site.type == 0 || site.type == 1) && site.api.startsWith("http") -> {
+                        val separator = if (site.api.contains("?")) "&" else "?"
+                        val url = "${site.api}${separator}ac=detail&t=$categoryId&pg=1"
+                        val request = Request.Builder().url(url).header("User-Agent", "okhttp/4.12.0").build()
+                        client.newCall(request).execute().use { response ->
+                            if (!response.isSuccessful) return@withContext emptyList()
+                            val body = response.body?.string() ?: ""
+                            parseSearchResult(body, site.type)
+                        }
+                    }
+                    site.type == 3 && site.api.startsWith("csp_") -> {
+                        val ext = site.ext?.let { extractExtString(it) } ?: ""
+                        val spider = spiderLoader?.getSpider(globalSpiderUrl, site.api, ext)
+                            ?: return@withContext emptyList()
+                        val result = spider.categoryContent(categoryId, "1", true)
+                        parseSearchResult(result, site.type)
+                    }
+                    else -> emptyList()
+                }
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+    }
+
+    /**
+     * 解析首页返回（提取分类和列表）
+     */
+    private fun parseHomeResult(body: String): HomeResult {
+        return try {
+            val jsonObj = json.parseToJsonElement(body).jsonObject
+            val categories = mutableListOf<String>()
+
+            // 提取 class 分类列表
+            val classList = jsonObj["class"]?.jsonArray
+            if (classList != null) {
+                for (item in classList) {
+                    val obj = item.jsonObject
+                    val name = obj["type_name"]?.jsonPrimitive?.contentOrNull ?: continue
+                    categories.add(name)
+                }
+            }
+
+            // 提取 list 内容
+            val items = jsonObj["list"]?.jsonArray?.let { list ->
+                list.mapNotNull { element ->
+                    val obj = element.jsonObject
+                    val vodId = obj["vod_id"]?.let { extractStringOrInt(it) } ?: return@mapNotNull null
+                    val vodName = obj["vod_name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                    SearchItem(
+                        vodId = vodId,
+                        vodName = vodName,
+                        vodPic = obj["vod_pic"]?.jsonPrimitive?.contentOrNull ?: "",
+                        typeName = obj["type_name"]?.jsonPrimitive?.contentOrNull ?: "",
+                        vodRemarks = obj["vod_remarks"]?.jsonPrimitive?.contentOrNull ?: ""
+                    )
+                }
+            } ?: emptyList()
+
+            HomeResult(categories = categories, items = items)
+        } catch (e: Exception) {
+            HomeResult()
+        }
+    }
+
     /**
      * 构建搜索 URL
      * 苹果CMS 格式: api?ac=search&wd=keyword

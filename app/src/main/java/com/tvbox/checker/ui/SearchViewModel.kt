@@ -148,6 +148,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
      * 测试播放链接列表
      */
     fun testPlayUrls(urls: List<String>) {
+        if (urls.isEmpty()) {
+            // 空列表 = 清除测试结果（关闭面板）
+            _searchState.update { it.copy(playTestResults = emptyList(), testedUrlCount = 0, isTesting = false) }
+            return
+        }
+
         viewModelScope.launch {
             _searchState.update {
                 it.copy(

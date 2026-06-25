@@ -166,7 +166,8 @@ fun SearchScreen(
                     PlayTestResultsSection(
                         results = searchState.playTestResults,
                         isTesting = searchState.isTesting,
-                        testedCount = searchState.testedUrlCount
+                        testedCount = searchState.testedUrlCount,
+                        onDismiss = { onTestPlayUrls(emptyList()) } // 清空结果来关闭
                     )
                 }
             }
@@ -361,7 +362,8 @@ private fun DetailDialog(
 private fun PlayTestResultsSection(
     results: List<PlayTestResult>,
     isTesting: Boolean,
-    testedCount: Int
+    testedCount: Int,
+    onDismiss: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -370,11 +372,17 @@ private fun PlayTestResultsSection(
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("播放链接测速", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                if (isTesting) {
-                    Text("测试中 $testedCount...", fontSize = 12.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isTesting) {
+                        Text("测试中 $testedCount...", fontSize = 12.sp)
+                    }
+                    TextButton(onClick = onDismiss) {
+                        Text("✕ 关闭", fontSize = 12.sp)
+                    }
                 }
             }
 

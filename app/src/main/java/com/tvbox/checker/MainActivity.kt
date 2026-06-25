@@ -13,9 +13,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tvbox.checker.ui.FilterType
 import com.tvbox.checker.ui.MainViewModel
 import com.tvbox.checker.ui.SearchViewModel
+import com.tvbox.checker.ui.BrowseViewModel
 import com.tvbox.checker.ui.screens.ExportDialog
 import com.tvbox.checker.ui.screens.HomeScreen
 import com.tvbox.checker.ui.screens.SearchScreen
+import com.tvbox.checker.ui.screens.BrowseScreen
 import com.tvbox.checker.ui.theme.TVBoxCheckerTheme
 
 class MainActivity : ComponentActivity() {
@@ -50,7 +52,13 @@ class MainActivity : ComponentActivity() {
                         selected = currentTab == 1,
                         onClick = { currentTab = 1 },
                         icon = { Text("🎬") },
-                        label = { Text("搜索测试") }
+                        label = { Text("搜索") }
+                    )
+                    NavigationBarItem(
+                        selected = currentTab == 2,
+                        onClick = { currentTab = 2 },
+                        icon = { Text("📂") },
+                        label = { Text("浏览") }
                     )
                 }
             }
@@ -59,6 +67,7 @@ class MainActivity : ComponentActivity() {
                 when (currentTab) {
                     0 -> CheckerTab()
                     1 -> SearchTab()
+                    2 -> BrowseTab()
                 }
             }
         }
@@ -117,6 +126,19 @@ class MainActivity : ComponentActivity() {
             onGetDetail = { site, vodId -> viewModel.getDetail(site, vodId) },
             onTestPlaySource = { source -> viewModel.testPlaySource(source) },
             onTestPlayUrls = { urls -> viewModel.testPlayUrls(urls) }
+        )
+    }
+
+    @Composable
+    private fun BrowseTab() {
+        val viewModel: BrowseViewModel = viewModel()
+        val browseState by viewModel.browseState.collectAsStateWithLifecycle()
+
+        BrowseScreen(
+            browseState = browseState,
+            onLoadSource = { url -> viewModel.loadSource(url) },
+            onSelectSite = { site -> viewModel.selectSite(site) },
+            onSelectCategory = { cat -> viewModel.selectCategory(cat) }
         )
     }
 }
