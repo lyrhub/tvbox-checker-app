@@ -30,19 +30,30 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _searchState.update { it.copy(isLoadingSource = true, loadError = null) }
             try {
-                val response = okhttp3.OkHttpClient().newCall(
-                    okhttp3.Request.Builder()
-                        .url(url.trim())
-                        .header("User-Agent", "TVBox-Checker/1.0")
+                val (text, httpError) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val response = okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
                         .build()
-                ).execute()
+                        .newCall(
+                            okhttp3.Request.Builder()
+                                .url(url.trim())
+                                .header("User-Agent", "TVBox-Checker/1.0")
+                                .build()
+                        ).execute()
 
-                if (!response.isSuccessful) {
-                    _searchState.update { it.copy(isLoadingSource = false, loadError = "HTTP ${response.code}") }
+                    if (!response.isSuccessful) {
+                        "" to "HTTP ${response.code}"
+                    } else {
+                        (response.body?.string() ?: "") to null
+                    }
+                }
+
+                if (httpError != null) {
+                    _searchState.update { it.copy(isLoadingSource = false, loadError = httpError) }
                     return@launch
                 }
 
-                val text = response.body?.string() ?: ""
                 val config = SourceParser.parse(text)
                 loadedConfig = config
 
