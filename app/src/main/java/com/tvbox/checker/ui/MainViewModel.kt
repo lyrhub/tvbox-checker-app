@@ -4,8 +4,13 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tvbox.checker.data.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 /**
  * 主界面 ViewModel
@@ -31,13 +36,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(isLoading = true, error = null, sourceUrl = url) }
 
             try {
-                val (text, httpError) = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val response = okhttp3.OkHttpClient.Builder()
-                        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                        .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                val (text, httpError) = withContext(Dispatchers.IO) {
+                    val response = OkHttpClient.Builder()
+                        .connectTimeout(15, TimeUnit.SECONDS)
+                        .readTimeout(15, TimeUnit.SECONDS)
                         .build()
                         .newCall(
-                            okhttp3.Request.Builder()
+                            Request.Builder()
                                 .url(url.trim())
                                 .header("User-Agent", "TVBox-Checker/1.0")
                                 .build()

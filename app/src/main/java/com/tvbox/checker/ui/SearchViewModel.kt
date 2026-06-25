@@ -4,10 +4,15 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tvbox.checker.data.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 /**
  * 搜索功能 ViewModel
@@ -30,13 +35,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _searchState.update { it.copy(isLoadingSource = true, loadError = null) }
             try {
-                val (text, httpError) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val response = okhttp3.OkHttpClient.Builder()
-                        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                        .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                val (text, httpError) = withContext(Dispatchers.IO) {
+                    val response = OkHttpClient.Builder()
+                        .connectTimeout(15, TimeUnit.SECONDS)
+                        .readTimeout(15, TimeUnit.SECONDS)
                         .build()
                         .newCall(
-                            okhttp3.Request.Builder()
+                            Request.Builder()
                                 .url(url.trim())
                                 .header("User-Agent", "TVBox-Checker/1.0")
                                 .build()
