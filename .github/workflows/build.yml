@@ -41,7 +41,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tvbox-checker-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/TVBox-Checker-*.apk
 
       - name: Build Release APK
         run: ./gradlew assembleRelease
@@ -50,9 +50,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tvbox-checker-release
-          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          path: app/build/outputs/apk/release/TVBox-Checker-*.apk
 
-  # 可选：自动创建 Release
+  # 自动创建 Release
   release:
     needs: build
     runs-on: ubuntu-latest
@@ -65,10 +65,18 @@ jobs:
         with:
           name: tvbox-checker-debug
 
+      - name: Get version from APK filename
+        id: version
+        run: |
+          APK_FILE=$(ls TVBox-Checker-*.apk 2>/dev/null | head -1)
+          VERSION=$(echo "$APK_FILE" | grep -oP 'v\d+\.\d+\.\d+')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "apk_file=$APK_FILE" >> $GITHUB_OUTPUT
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.run_number }}
-          name: "Build #${{ github.run_number }}"
-          files: app-debug.apk
+          tag_name: ${{ steps.version.outputs.version || format('v{0}', github.run_number) }}
+          name: "TVBox Checker ${{ steps.version.outputs.version || github.run_number }}"
+          files: TVBox-Checker-*.apk
           generate_release_notes: true
